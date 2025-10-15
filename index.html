@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ScanQuiz · 首页</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+<style>
+  body{padding:24px}
+  .card{border-radius:20px}
+  .qr{border:6px solid #f8f9fa;border-radius:12px}
+  .muted{color:#6c757d}
+</style>
+</head>
+<body class="bg-light">
+<div class="container">
+  <div class="d-flex align-items-center justify-content-between mb-4">
+    <div class="d-flex align-items-center gap-3">
+      <div style="font-size:36px">🧪</div>
+      <div>
+        <h2 class="mb-0">ScanQuiz · 系统生物学课堂互动</h2>
+        <div class="muted">一个零安装、扫码即答的课堂即时反馈工具</div>
+      </div>
+    </div>
+    <span id="statusBadge" class="badge bg-secondary">未检测</span>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h5 class="card-title"><i class="bi bi-cloud-check"></i> 在线配置（Firebase Realtime Database）</h5>
+          <p class="text-muted mb-2">粘贴 <b>JSON</b>（包含 <code>apiKey</code>、<code>databaseURL</code> 等）。用于生成带配置参数的快捷链接与二维码。</p>
+          <textarea id="cfg" class="form-control" rows="6" placeholder='{"apiKey":"...","authDomain":"...","databaseURL":"...","projectId":"...","storageBucket":"...","messagingSenderId":"...","appId":"..."}'></textarea>
+          <div class="row g-2 mt-2">
+            <div class="col-md-6">
+              <label class="form-label">房间名（room）</label>
+              <input id="room" class="form-control" placeholder="如：SysBio_2025_10_15" value="SysBio_2025">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">题目ID（qid）</label>
+              <input id="qid" class="form-control" placeholder="如：T1" value="T1">
+            </div>
+          </div>
+          <div class="d-flex gap-2 mt-3">
+            <button id="testBtn" class="btn btn-outline-primary"><i class="bi bi-activity"></i> 检测连接</button>
+            <button id="buildBtn" class="btn btn-primary"><i class="bi bi-link-45deg"></i> 生成链接 & 二维码</button>
+            <button id="clearBtn" class="btn btn-outline-secondary"><i class="bi bi-trash"></i> 清空</button>
+          </div>
+          <div class="form-text mt-2">提示：连接成功后，学生端才可从云端读取题目。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h5 class="card-title"><i class="bi bi-joystick"></i> 快速入口</h5>
+          <p class="text-muted">链接会带上 <code>room/qid/cfg</code> 参数，便于课堂使用。</p>
+          <div class="mb-3">
+            <label class="form-label">教师端链接（teacher.html）</label>
+            <input id="teacherLink" class="form-control" readonly>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">学生端链接（student.html）</label>
+            <input id="studentLink" class="form-control" readonly>
+          </div>
+
+          <div class="row g-3 align-items-start">
+            <div class="col-md-6 text-center">
+              <div class="mb-2 muted">学生端二维码</div>
+              <canvas id="qrStudent" class="qr" width="256" height="256"></canvas>
+              <div class="mt-2">
+                <a id="dlStudentQR" class="btn btn-sm btn-outline-secondary" download="ScanQuiz_Student_QR.png" href="#"><i class="bi bi-download"></i> 下载二维码</a>
+              </div>
+            </div>
+            <div class="col-md-6 text-center">
+              <div class="mb-2 muted">教师端二维码</div>
+              <canvas id="qrTeacher" class="qr" width="256" height="256"></canvas>
+              <div class="mt-2">
+                <a id="dlTeacherQR" class="btn btn-sm btn-outline-secondary" download="ScanQuiz_Teacher_QR.png" href="#"><i class="bi bi-download"></i> 下载二维码</a>
+              </div>
+            </div>
+          </div>
+
+          <hr>
+          <div class="d-flex gap-2">
+            <a class="btn btn-outline-dark" id="openTeacher" target="_blank"><i class="bi bi-box-arrow-up-right"></i> 进入教师端</a>
+            <a class="btn btn-success" id="openStudent" target="_blank"><i class="bi bi-qr-code-scan"></i> 进入学生端</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mt-4">
+    <div class="card-body">
+      <h5 class="card-title"><i class="bi bi-info-circle"></i> 使用说明</h5>
+      <ol class="mb-0">
+        <li>先打开 <b>教师端</b>，导入题库并选择题目；在教师端点击“连接”后，会把当前题发布到数据库的 <code>/rooms/&lt;room&gt;/&lt;qid&gt;/question</code>。</li>
+        <li>从本页生成 <b>学生端链接</b>（含 room/qid/cfg），插入到 PPT 的二维码里给学生扫码。</li>
+        <li>学生作答会写入 <code>/rooms/&lt;room&gt;/&lt;qid&gt;/responses/&lt;timestamp&gt;</code>，教师端会实时统计。</li>
+        <li>更换题库或切换题目后，请回到 <b>教师端</b>重新发布题目并在本页<b>重新生成二维码</b>。</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// 工具函数
+function basePath(){
+  const url = new URL(location.href);
+  const parts = url.pathname.split('/');
+  parts.pop(); // remove current file
+  return url.origin + parts.join('/') + '/';
+}
+function safeB64(jsonStr){
+  try{
+    // 直接 btoa 对 UTF-8 不安全，这里进行编码转换
+    return btoa(unescape(encodeURIComponent(jsonStr)));
+  }catch(e){ return ''; }
+}
+function drawQR(canvasId, text){
+  const c = document.getElementById(canvasId);
+  const draw = ()=> window.QRCode.toCanvas(c, text, {margin:2, scale:8}, err=>{
+    if(err){ const ctx=c.getContext('2d'); ctx.fillStyle='#eee'; ctx.fillRect(0,0,c.width,c.height); ctx.fillStyle='#333'; ctx.font='12px monospace'; ctx.fillText('无法生成QR',16,132); }
+  });
+  if(!window.QRCode){
+    const s=document.createElement('script'); s.src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"; s.onload=draw; document.head.appendChild(s);
+  }else{ draw(); }
+}
+function buildLinks(){
+  const cfgText=document.getElementById('cfg').value.trim();
+  const room=document.getElementById('room').value.trim();
+  const qid=document.getElementById('qid').value.trim();
+  if(!cfgText || !room || !qid){ alert('请填写 配置 / 房间 / 题目ID'); return; }
+  let cfgB64 = '';
+  try{ cfgB64 = safeB64(cfgText); JSON.parse(cfgText); } catch(e){ alert('配置不是合法 JSON：'+e); return; }
+  const base = basePath();
+  const teacher = `${base}teacher.html?room=${encodeURIComponent(room)}&qid=${encodeURIComponent(qid)}&cfg=${encodeURIComponent(cfgB64)}`;
+  const student = `${base}student.html?room=${encodeURIComponent(room)}&qid=${encodeURIComponent(qid)}&cfg=${encodeURIComponent(cfgB64)}`;
+  document.getElementById('teacherLink').value = teacher;
+  document.getElementById('studentLink').value = student;
+  drawQR('qrTeacher', teacher);
+  drawQR('qrStudent', student);
+  document.getElementById('dlTeacherQR').href = document.getElementById('qrTeacher').toDataURL('image/png');
+  document.getElementById('dlStudentQR').href = document.getElementById('qrStudent').toDataURL('image/png');
+  document.getElementById('openTeacher').href = teacher;
+  document.getElementById('openStudent').href = student;
+}
+
+// 连接检测：尝试初始化 Firebase，并读取 /.info/connected
+document.getElementById('testBtn').onclick=()=>{
+  const cfgText=document.getElementById('cfg').value.trim();
+  if(!cfgText){ alert('请先粘贴 Firebase JSON'); return; }
+  let cfg; try{ cfg=JSON.parse(cfgText); }catch(e){ alert('JSON 无效：'+e); return; }
+  const s1=document.createElement('script'); s1.src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js";
+  const s2=document.createElement('script'); s2.src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js";
+  let loaded=0; const onload=()=>{
+    if(++loaded===2){
+      try{
+        // 防止重复初始化
+        if(!window.firebase.apps.length){ window.firebase.initializeApp(cfg); }
+        const db=window.firebase.database();
+        db.ref('.info/connected').once('value').then(snap=>{
+          const connected = !!snap.val();
+          document.getElementById('statusBadge').textContent = connected ? '在线（可用）' : '在线（未连接到RTDB）';
+          document.getElementById('statusBadge').className = 'badge ' + (connected ? 'bg-success' : 'bg-warning');
+        }).catch(err=>{
+          document.getElementById('statusBadge').textContent = '连接失败';
+          document.getElementById('statusBadge').className = 'badge bg-danger';
+        });
+      }catch(e){
+        document.getElementById('statusBadge').textContent = '初始化失败';
+        document.getElementById('statusBadge').className = 'badge bg-danger';
+      }
+    }
+  };
+  s1.onload=onload; s2.onload=onload; document.head.appendChild(s1); document.head.appendChild(s2);
+};
+
+document.getElementById('buildBtn').onclick=buildLinks;
+document.getElementById('clearBtn').onclick=()=>{
+  document.getElementById('cfg').value='';
+  document.getElementById('room').value='';
+  document.getElementById('qid').value='';
+  document.getElementById('teacherLink').value='';
+  document.getElementById('studentLink').value='';
+  const ctx1=document.getElementById('qrTeacher').getContext('2d'); ctx1.clearRect(0,0,256,256);
+  const ctx2=document.getElementById('qrStudent').getContext('2d'); ctx2.clearRect(0,0,256,256);
+  document.getElementById('statusBadge').textContent='未检测'; document.getElementById('statusBadge').className='badge bg-secondary';
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

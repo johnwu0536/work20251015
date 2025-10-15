@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ScanQuiz · 教师端</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+<style>
+body{padding:16px}.card{border-radius:16px}.qr{border:6px solid #f8f9fa;border-radius:12px}
+code.small{font-size:.85rem;background:#f8f9fa;padding:.25rem .5rem;border-radius:.25rem}
+</style>
+</head>
+<body class="bg-light">
+<div class="container">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h3 class="mb-0">ScanQuiz · 教师端</h3>
+    <span id="modeBadge" class="badge bg-secondary">未连接</span>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-5">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title">在线模式（Firebase 配置）</h5>
+          <p class="text-muted mb-2">粘贴 <b>JSON</b>（含 <code>apiKey</code>, <code>databaseURL</code> 等）。</p>
+          <textarea id="firebaseCfg" class="form-control" rows="6" placeholder='{"apiKey":"...","authDomain":"...","databaseURL":"...","projectId":"...","storageBucket":"...","messagingSenderId":"...","appId":"..."}'></textarea>
+          <div class="row g-2 mt-2">
+            <div class="col-8"><input id="room" class="form-control" placeholder="房间名（建议课程名_日期）" value="room_001"></div>
+            <div class="col-4 d-grid"><button id="connectBtn" class="btn btn-primary">连接</button></div>
+          </div>
+          <div class="form-text mt-2">成功连接后会显示 “在线”。</div>
+        </div>
+      </div>
+
+      <div class="card shadow-sm mt-3">
+        <div class="card-body">
+          <h5 class="card-title">题库管理</h5>
+          <label class="form-label">导入 CSV（id,topic,question,option_a,option_b,option_c,option_d,correct）</label>
+          <textarea id="csvInput" class="form-control" rows="6" placeholder="粘贴 CSV 文本或点击下方“载入示例”"></textarea>
+          <div class="mt-2 d-flex gap-2">
+            <button class="btn btn-sm btn-outline-secondary" id="loadSample">载入示例</button>
+            <button class="btn btn-sm btn-primary" id="importCSV">导入/追加</button>
+            <button class="btn btn-sm btn-outline-danger" id="clearBank">清空题库</button>
+          </div>
+          <div class="mt-3">
+            <label class="form-label">选择题目</label>
+            <select id="qSelect" class="form-select"></select>
+          </div>
+        </div>
+      </div>
+
+      <div class="card shadow-sm mt-3">
+        <div class="card-body">
+          <h5 class="card-title">学生端链接 & 二维码（每题唯一）</h5>
+          <div class="mb-2">
+            <label class="form-label">学生端 URL</label>
+            <input id="studentUrl" class="form-control" readonly>
+            <div class="form-text">把这个链接或二维码放进 PPT，学生手机扫码即可作答。</div>
+          </div>
+          <div class="d-flex gap-2 mb-2">
+            <button class="btn btn-success" id="genQR">生成二维码</button>
+            <a class="btn btn-outline-secondary" id="downloadQR" href="#" download="ScanQuiz_QR.png">下载二维码</a>
+          </div>
+          <canvas id="qrCanvas" class="qr" width="256" height="256"></canvas>
+          <div class="form-text mt-2">⚠️ 每次更换题目或题库后，<b>请重新生成二维码</b>。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-7">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center">
+            <h5 class="card-title mb-0">实时统计（按题目）</h5>
+            <div class="d-flex gap-2">
+              <button class="btn btn-sm btn-outline-secondary" id="resetStats">清本题统计</button>
+              <button class="btn btn-sm btn-outline-primary" id="exportCSV">导出本题CSV</button>
+            </div>
+          </div>
+          <div class="row mt-3">
+            <div class="col-md-6"><canvas id="barChart"></canvas></div>
+            <div class="col-md-6">
+              <div class="p-3 bg-white rounded border">
+                <h6 id="qTitle">题目</h6>
+                <p class="mb-1"><b>正确答案：</b><span id="correct"></span></p>
+                <p class="mb-1"><b>总作答人数：</b><span id="total"></span></p>
+                <p class="mb-1"><b>正确率：</b><span id="rate"></span>%</p>
+                <p class="mb-1"><b>最常见错项：</b><span id="wrong"></span></p>
+              </div>
+            </div>
+          </div>
+          <hr>
+          <h6>切换统计题目</h6>
+          <div class="row g-2">
+            <div class="col-8"><select id="qSelectStats" class="form-select"></select></div>
+            <div class="col-4 d-grid"><button class="btn btn-outline-primary" id="watchStats">切换实时订阅</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Firebase v8 SDK（连接后按需加载） -->
+<script>
+let ONLINE=false, DB=null, ROOM='room_001', currentQID=null, chart=null;
+
+// 存储题库在 localStorage（教师端）
+const Bank = {
+  get all(){ return JSON.parse(localStorage.getItem('sq_bank')||'[]'); },
+  set all(v){ localStorage.setItem('sq_bank', JSON.stringify(v)); },
+  add(q){ const b=Bank.all; const i=b.findIndex(x=>x.id===q.id); if(i>=0) b[i]=q; else b.push(q); Bank.all=b; },
+  clear(){ localStorage.removeItem('sq_bank'); }
+};
+
+function parseCSVLine(line){
+  const res=[]; let cur=''; let inQ=false;
+  for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(ch=='"'){ inQ=!inQ; }
+    else if(ch==',' && !inQ){ res.push(cur); cur=''; }
+    else{ cur+=ch; }
+  }
+  res.push(cur); return res.map(s=>s.replace(/^"(.*)"$/,'$1'));
+}
+function getQ(id){ return Bank.all.find(x=>x.id===id); }
+function refreshSelects(){
+  const sel1=document.getElementById('qSelect'); sel1.innerHTML='';
+  const sel2=document.getElementById('qSelectStats'); sel2.innerHTML='';
+  for(const q of Bank.all){
+    const o1=document.createElement('option'); o1.value=q.id; o1.textContent=`${q.id}｜${q.topic}｜${q.question.slice(0,16)}...`; sel1.appendChild(o1);
+    const o2=document.createElement('option'); o2.value=q.id; o2.textContent=`${q.id}｜${q.topic}`; sel2.appendChild(o2);
+  }
+  if(Bank.all.length){
+    currentQID = currentQID || Bank.all[0].id;
+    sel1.value=currentQID; sel2.value=currentQID;
+    updateStudentUrl();
+    renderStats(currentQID,true);
+  }else{
+    currentQID=null; document.getElementById('studentUrl').value='';
+  }
+}
+function updateStudentUrl(){
+  if(!currentQID) return;
+  // 假设 teacher.html 与 student.html 位于同一目录
+  let base = location.href;
+  if(base.indexOf('teacher.html')>=0) base = base.replace('teacher.html','student.html');
+  const url = `${base.split('#')[0].split('?')[0]}?room=${encodeURIComponent(ROOM)}&qid=${encodeURIComponent(currentQID)}`;
+  document.getElementById('studentUrl').value=url;
+}
+function genQR(){
+  const url=document.getElementById('studentUrl').value;
+  if(!url){ alert('请先导入题库并选择题目'); return; }
+  const canvas=document.getElementById('qrCanvas');
+  window.QRCode.toCanvas(canvas, url, {margin:2, scale:8});
+  const a=document.getElementById('downloadQR'); a.href=canvas.toDataURL('image/png');
+}
+function calcMostWrong(counts, correct){
+  const arr=Object.entries(counts).filter(([k])=>k!==correct).sort((a,b)=>b[1]-a[1]);
+  return (arr[0] && arr[0][1]>0) ? arr[0][0] : '-';
+}
+function renderStats(qid, init=false){
+  const q=getQ(qid); if(!q) return;
+  // 从本地镜像读取（Firebase 订阅会写入这个镜像）
+  const data = JSON.parse(localStorage.getItem('sq_stats_'+ROOM+'_'+qid) || '{"A":0,"B":0,"C":0,"D":0,"total":0,"correct":0}');
+  const total=data.total||0; const correctN=data.correct||0; const rate = total? (correctN/total*100).toFixed(1) : 0;
+  document.getElementById('qTitle').textContent=q.question;
+  document.getElementById('correct').textContent=q.correct;
+  document.getElementById('total').textContent=total;
+  document.getElementById('rate').textContent=rate;
+  document.getElementById('wrong').textContent=calcMostWrong({A:data.A||0,B:data.B||0,C:data.C||0,D:data.D||0}, q.correct);
+  const labels=['A','B','C','D']; const values=labels.map(k=>data[k]||0);
+  if(!chart){
+    chart=new Chart(document.getElementById('barChart'),{type:'bar',data:{labels,datasets:[{label:'选项人数',data:values}]},options:{responsive:true,scales:{y:{beginAtZero:true,precision:0}}}});
+  }else{
+    chart.data.datasets[0].data=values; chart.update();
+  }
+}
+
+function subscribeRTDB(qid){
+  if(!ONLINE || !DB || !qid) return;
+  const path = `/rooms/${encodeURIComponent(ROOM)}/${encodeURIComponent(qid)}/responses`;
+  DB.ref(path).off(); // 取消上一个订阅
+  DB.ref(path).on('child_added', snap=>{
+    const v=snap.val(); if(!v||!v.sel) return;
+    const q=getQ(qid); if(!q) return;
+    const key='sq_stats_'+ROOM+'_'+qid;
+    const s=JSON.parse(localStorage.getItem(key) || '{"A":0,"B":0,"C":0,"D":0,"total":0,"correct":0}');
+    s[v.sel]=(s[v.sel]||0)+1; s.total=(s.total||0)+1; if(v.sel===q.correct) s.correct=(s.correct||0)+1;
+    localStorage.setItem(key, JSON.stringify(s));
+    if(qid===currentQID){ renderStats(qid,true); }
+  });
+}
+
+function resetStats(){
+  if(!currentQID) return;
+  const key='sq_stats_'+ROOM+'_'+currentQID;
+  localStorage.setItem(key, JSON.stringify({"A":0,"B":0,"C":0,"D":0,"total":0,"correct":0}));
+  renderStats(currentQID,true);
+}
+
+function exportCSV(){
+  if(!currentQID) return;
+  const key='sq_stats_'+ROOM+'_'+currentQID;
+  const s=JSON.parse(localStorage.getItem(key) || '{"A":0,"B":0,"C":0,"D":0,"total":0,"correct":0}');
+  const q=getQ(currentQID); const rate = s.total? (s.correct/s.total*100).toFixed(1) : 0;
+  const csv=`question_id,topic,question,total,correct,rate,A,B,C,D\n${currentQID},"${q.topic}","${q.question.replace(/"/g,'""')}",${s.total||0},${s.correct||0},${rate},${s.A||0},${s.B||0},${s.C||0},${s.D||0}\n`;
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`stats_${ROOM}_${currentQID}.csv`; a.click();
+}
+
+// UI handlers
+document.getElementById('loadSample').onclick=()=>{
+  document.getElementById('csvInput').value =
+`id,topic,question,option_a,option_b,option_c,option_d,correct
+T1,Central Dogma,在系统生物学中，下列哪项最能体现“整体性”的思想？,单个基因的功能,代谢通路之间的交互,单个蛋白质的结构,单一细胞的表型,B
+T2,Network Motif,下列哪种结构被称为“前馈环”(FFL)？,A调控B，B抑制C，A也抑制C,A调控B，B激活C，A也激活C,A抑制B，B激活C，A也抑制C,B抑制A，A激活C，C抑制B,B
+T3,Parameter Sensitivity,参数灵敏度分析的主要目标是？,减少样本量,找到对模型输出影响最大的参数,提高硬件速度,替代实验数据,B`;
+};
+document.getElementById('importCSV').onclick=()=>{
+  const t=document.getElementById('csvInput').value.trim(); if(!t) return;
+  const rows=t.split(/\r?\n/); const head=rows.shift().split(',');
+  const idx=(k)=>head.indexOf(k);
+  for(const line of rows){
+    if(!line.trim()) continue;
+    const c=parseCSVLine(line);
+    const q={id:c[idx('id')],topic:c[idx('topic')],question:c[idx('question')],
+      option_a:c[idx('option_a')],option_b:c[idx('option_b')],option_c:c[idx('option_c')],option_d:c[idx('option_d')],correct:(c[idx('correct')]||'').toUpperCase()};
+    if(!q.id||!q.correct) continue;
+    Bank.add(q);
+  }
+  refreshSelects();
+  alert('题库导入完成');
+};
+document.getElementById('clearBank').onclick=()=>{ if(confirm('确定清空题库？')){ Bank.clear(); refreshSelects(); } };
+
+document.getElementById('qSelect').onchange=(e)=>{
+  currentQID = e.target.value;
+  updateStudentUrl(); genQR(); renderStats(currentQID,true);
+  if(ONLINE) subscribeRTDB(currentQID);
+};
+document.getElementById('genQR').onclick=genQR;
+document.getElementById('resetStats').onclick=resetStats;
+document.getElementById('exportCSV').onclick=exportCSV;
+document.getElementById('watchStats').onclick=()=>{
+  const id=document.getElementById('qSelectStats').value;
+  if(id){ currentQID=id; document.getElementById('qSelect').value=id; renderStats(id,true); if(ONLINE) subscribeRTDB(id); updateStudentUrl(); genQR(); }
+};
+
+document.getElementById('connectBtn').onclick=()=>{
+  try{
+    const cfg = JSON.parse(document.getElementById('firebaseCfg').value.trim());
+    ROOM = document.getElementById('room').value.trim() || 'room_001';
+    const s1=document.createElement('script'); s1.src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js";
+    const s2=document.createElement('script'); s2.src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js";
+    let loaded=0; const onload=()=>{ if(++loaded===2){ window.firebase.initializeApp(cfg); DB=window.firebase.database(); ONLINE=true; document.getElementById('modeBadge').textContent='在线'; 
+      // 同步题目到 RTDB，供学生端读取（/rooms/<room>/<qid>/question）
+      if(currentQID){
+        const q=getQ(currentQID);
+        DB.ref(`/rooms/${encodeURIComponent(ROOM)}/${encodeURIComponent(currentQID)}/question`).set(q);
+        subscribeRTDB(currentQID);
+      }
+      genQR(); } };
+    s1.onload=onload; s2.onload=onload;
+    document.head.appendChild(s1); document.head.appendChild(s2);
+  }catch(e){ alert('配置无效：'+e); }
+};
+
+// 初始化
+document.addEventListener('DOMContentLoaded', ()=>{
+  refreshSelects();
+});
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
